@@ -73,6 +73,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # admin CSS/JS를 Django가 직접 서빙한다. nginx와 정적 파일 볼륨을 공유할 필요가 없어진다.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -107,7 +109,8 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        # 컨테이너에서는 DB 파일만 볼륨에 두어야 이미지를 다시 만들어도 데이터가 남는다.
+        "NAME": os.environ.get("SQLITE_PATH") or BASE_DIR / "db.sqlite3",
     }
 }
 
@@ -148,8 +151,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
-# collectstatic이 admin CSS/JS를 모으는 곳. nginx가 /static/ 으로 서빙한다.
+# collectstatic이 admin CSS/JS를 모으는 곳. WhiteNoise가 여기서 읽어 서빙한다.
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # Manifest 버전은 collectstatic을 먼저 돌려야만 동작해서 테스트와 로컬 개발이 깨진다.
+    # admin 자산은 Django 버전에 묶여 있어 캐시 무효화가 필요 없으므로 압축만 한다.
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
 
 # HTTPS를 붙이면(도메인 확보 후) 아래를 켠다.
 if os.environ.get("SECURE_SSL", "0") == "1":
