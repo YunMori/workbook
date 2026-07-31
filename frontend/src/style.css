@@ -1,0 +1,330 @@
+/* ============================================================
+   문제집 — 인쇄된 워크북 + 빨간펜 채점
+   규칙 하나: 빨간색(--red)은 채점에만 쓴다. 코드 하이라이팅과
+   UI 강조는 잉크 계열(파랑·초록·호박)만 사용해 채점 표시와 겹치지 않게 한다.
+   ============================================================ */
+
+:root {
+  --paper: #faf9f6;
+  --sheet: #ffffff;
+  --ink: #14161a;
+  --ink-2: #5a6069;
+  --ink-3: #8d939b;
+  --rule: #e2e2dc;
+  --rule-strong: #c9cac2;
+
+  --red: #d3202b; /* 채점 전용 */
+  --red-soft: #fdeced;
+  --marker: #ffe9a8; /* 형광펜 — 정답 공개 */
+
+  --code-bg: #f2f2ed;
+  --syn-key: #1b4fd8;
+  --syn-str: #2c7a58;
+  --syn-num: #a35a09;
+  --syn-com: #8d939b;
+  --syn-attr: #7a3e9d;
+
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, 'Cascadia Mono', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', Pretendard,
+    'Malgun Gothic', system-ui, sans-serif;
+
+  --shadow: 0 1px 2px rgba(20, 22, 26, 0.04), 0 8px 24px -16px rgba(20, 22, 26, 0.25);
+  --radius: 4px;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14161a;
+    --sheet: #1b1e23;
+    --ink: #e9eaec;
+    --ink-2: #a2a8b0;
+    --ink-3: #767c85;
+    --rule: #2b2f36;
+    --rule-strong: #3d434c;
+
+    --red: #ff5b5b;
+    --red-soft: #33191b;
+    --marker: #4a3c12;
+
+    --code-bg: #101318;
+    --syn-key: #7ea2ff;
+    --syn-str: #6cc79a;
+    --syn-num: #e0a464;
+    --syn-com: #6b727c;
+    --syn-attr: #c398e8;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+}
+
+/* 구조를 나타내는 요소는 모두 모노스페이스로 — 코드와 같은 목소리 */
+h1,
+h2,
+h3,
+.mono {
+  font-family: var(--mono);
+  letter-spacing: -0.02em;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--syn-key);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ---------- 공통 파츠 ---------- */
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.btn:hover {
+  border-color: var(--ink-2);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn--solid {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.btn--solid:hover {
+  background: var(--ink-2);
+  border-color: var(--ink-2);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sheet {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.empty {
+  padding: 4rem 1.5rem;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+/* ---------- 마크다운 본문 ---------- */
+
+.md {
+  line-height: 1.75;
+}
+
+.md > *:first-child {
+  margin-top: 0;
+}
+
+.md > *:last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 0.7em;
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.3em;
+}
+
+.md li {
+  margin-bottom: 0.2em;
+}
+
+.md strong {
+  font-weight: 700;
+}
+
+.md code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+  word-break: break-all;
+}
+
+.md pre {
+  margin: 0.7em 0;
+  padding: 0.85rem 1rem;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-strong);
+  border-radius: 3px;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+.md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.8125rem;
+  word-break: normal;
+}
+
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 0.875rem;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--rule);
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+}
+
+.md th {
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.md blockquote {
+  margin: 0.7em 0;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-2);
+}
+
+/* 교과서 인쇄물 같은 구문 강조 — 빨강은 채점 몫이라 쓰지 않는다 */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-literal {
+  color: var(--syn-key);
+}
+.hljs-string,
+.hljs-regexp {
+  color: var(--syn-str);
+}
+.hljs-number {
+  color: var(--syn-num);
+}
+.hljs-comment {
+  color: var(--syn-com);
+  font-style: italic;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-name,
+.hljs-tag {
+  color: var(--syn-attr);
+}
+.hljs-title,
+.hljs-function .hljs-title,
+.hljs-variable.language_ {
+  color: var(--ink);
+  font-weight: 600;
+}

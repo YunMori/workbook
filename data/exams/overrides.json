@@ -1,0 +1,23 @@
+{
+  "_comment": "원본 마크다운에 손으로 적어 둔 답안 초안 등, 파서가 지문과 구분할 수 없는 내용을 문항 단위로 덮어쓴다. 키는 \"<차수>-<버전>\" / \"<문항번호>\". import_exam 실행 시 자동 적용된다.",
+  "2-1": {
+    "22": {
+      "body": "`v-bind`와 `v-on`의 shorthand(약어) 기호를 각각 쓰시오.\n\n- `v-bind` → (        )\n- `v-on` → (        )"
+    },
+    "23": {
+      "body": "다음 코드의 출력 결과를 순서대로 쓰시오.\n\n```js\nconst obj1 = { name: 'Alice', age: 30 }\nconst obj2 = obj1\nobj2.age = 40\n\nconsole.log(obj1.age)\nconsole.log(obj2.age)\n```"
+    },
+    "24": {
+      "body": "`numbers` 배열에서 짝수만 걸러낸 결과를 반환하는 computed 속성을 완성하시오.\n\n```js\nimport { ref, computed } from 'vue'\n\nconst numbers = ref([1, 2, 3, 4, 5])\n\nconst evenNumbers = computed(() => {\n  return ______________________________\n})\n```"
+    },
+    "27": {
+      "body": "Array helper method인 `forEach()`와 `map()`의 **반환 값** 차이를 각각 한 줄로 쓰시오."
+    },
+    "29": {
+      "body": "Vue 컴포넌트에서 props가 **하향식 단방향 바인딩(One-Way Data Flow)** 으로 설계된 이유를 설명하고, 자식 컴포넌트가 부모의 상태를 바꾸고자 할 때 사용해야 하는 방식을 서술하시오. (3줄 이상)"
+    },
+    "30": {
+      "body": "아래 코드가 `Hi → Bye → Work` 순으로 출력되는 과정을 **Call Stack, Web API, Task Queue, Event Loop** 네 요소를 모두 사용하여 단계별로 서술하시오. (4줄 이상)\n\n```js\nconsole.log('Hi')\nsetTimeout(function myFunc() { console.log('Work') }, 3000)\nconsole.log('Bye')\n```"
+    }
+  }
+}
