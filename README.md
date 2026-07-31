@@ -88,30 +88,64 @@ cd backend && ../.venv/bin/python manage.py test exams
 파서(실제 5개 버전이 30문항·배점 100점으로 파싱되는지, 정답표와 개별 해설이 일치하는지),
 채점 로직, 응시 API, 관리자 화면을 확인한다.
 
-## EC2 배포
+## EC2 배포 (Docker)
 
-nginx가 80번을 받아 `/api/`·`/admin/`은 유닉스 소켓으로 gunicorn에 넘기고, 나머지는
-`frontend/dist`를 정적으로 서빙한다. 프론트와 API가 같은 오리진이 되므로 CORS 설정이 필요 없다.
+컨테이너 두 개다.
+
+| 서비스 | 하는 일 |
+|---|---|
+| `web` | Django + gunicorn. `/api/`, `/admin/`, `/static/`(WhiteNoise) 처리 |
+| `nginx` | 80번을 받아 위 경로는 `web`으로 넘기고, 나머지는 Vue 빌드 결과를 서빙 |
+
+Vue는 `frontend/Dockerfile`의 빌드 스테이지에서 컴파일돼 nginx 이미지에 구워진다.
+서버에 파이썬·Node·nginx를 따로 설치할 일이 없다.
+
+**데이터**는 `db` 볼륨의 `db.sqlite3` 하나뿐이다. 이미지를 다시 빌드해도 응시 기록과
+admin에서 고친 내용은 남는다.
 
 설정은 `backend/.env`로 주입한다. 이 파일이 없으면 개발용 기본값으로 동작하므로
-로컬 실행 방법은 그대로다. 항목은 `backend/.env.example` 참고.
+로컬 실행 방법(`runserver` + `npm run dev`)은 그대로다. 항목은 `backend/.env.example` 참고.
 
 ### 준비
 
 - EC2에 **탄력적 IP를 연결**한다. 안 하면 재시작할 때마다 IP가 바뀌어 `ALLOWED_HOSTS`를 매번 고쳐야 한다.
 - 보안 그룹: 22번은 내 IP만, 80번은 전체 개방.
+- Docker 설치:
+  ```bash
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker $USER && exec newgrp docker
+  ```
+- **스왑 2GB** — 1GB 인스턴스(t2.micro 등)에서 프론트엔드 빌드가 메모리 부족으로 죽는 것을 막는다.
+  ```bash
+  sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+  sudo mkswap /swapfile && sudo swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  ```
 
 ### 처음 한 번
 
 ```bash
 sudo mkdir -p /srv/workbook && sudo chown "$USER":"$USER" /srv/workbook
-git clone <저장소> /srv/workbook
-bash /srv/workbook/deploy/setup.sh
+git clone <저장소> /srv/workbook && cd /srv/workbook
+
+export IP=<탄력적 IP>
+cat > backend/.env <<EOF
+SECRET_KEY=$(head -c 50 /dev/urandom | base64 | tr -d '\n=+/')
+DEBUG=0
+ALLOWED_HOSTS=$IP
+CSRF_TRUSTED_ORIGINS=http://$IP
+SECURE_SSL=0
+EOF
+chmod 600 backend/.env
+
+docker compose up -d --build
+docker compose exec web python manage.py createsuperuser
 ```
 
-`setup.sh`가 스왑·패키지·가상환경·systemd 등록까지 하고, 값이 필요한 남은 단계
-(`.env` 작성 → migrate/import_exam/createsuperuser/collectstatic → 프론트 빌드 → nginx → 기동)를
-화면에 안내한다.
+첫 기동에서 `web` 컨테이너가 migrate → collectstatic → `import_exam`을 자동으로 돌려
+문제 150개를 채운다. 이후 기동에서는 이미 등록된 회차를 건너뛴다.
+
+`http://<탄력적 IP>` 로 접속.
 
 ### 업데이트
 
@@ -119,36 +153,40 @@ bash /srv/workbook/deploy/setup.sh
 /srv/workbook/deploy/deploy.sh
 ```
 
-git pull → 의존성 → migrate → collectstatic → 프론트 빌드 → 재시작을 한 번에 한다.
-**마크다운 문제를 고쳤다면** 별도로 돌려야 한다 (admin 수정분이 덮어써진다):
+git pull → 이미지 빌드 → 재기동 → 오래된 이미지 정리.
+
+**마크다운 문제를 고쳤다면** 따로 돌린다 (admin에서 손으로 고친 내용이 덮어써진다):
 
 ```bash
-cd /srv/workbook/backend && ../.venv/bin/python manage.py import_exam --update
+docker compose exec web python manage.py import_exam --update
+```
+
+### 자주 쓰는 명령
+
+```bash
+docker compose ps                  # 상태
+docker compose logs -f web         # 로그
+docker compose restart web         # 재시작
+docker compose exec web sh         # 컨테이너 안으로
+
+HTTP_PORT=8080 docker compose up -d   # 80번이 이미 쓰이고 있을 때
 ```
 
 ### HTTPS
 
 도메인이 없는 동안은 HTTP라 **admin 비밀번호가 평문으로 오간다.** 두 가지 대응:
 
-1. `deploy/nginx.conf`의 `allow __MY_IP__; deny all;` 주석을 풀어 관리자 화면을 내 IP로 제한
-2. 도메인(무료 서브도메인도 가능)을 얻어 `sudo certbot --nginx` 실행 후 `.env`에 `SECURE_SSL=1`
+1. `deploy/nginx.conf`의 `allow __MY_IP__; deny all;` 주석을 풀어 관리자 화면을 내 IP로 제한 (이미지 재빌드 필요)
+2. 도메인(무료 서브도메인도 가능)을 얻어 인증서를 받은 뒤 `.env`에 `SECURE_SSL=1`
 
 `SECURE_SSL=1`은 HTTPS 리다이렉트와 secure 쿠키를 켠다. **HTTP 상태에서 켜면 무한 리다이렉트가 된다.**
 
-### 파일
-
-| 경로 | 용도 |
-|---|---|
-| `deploy/setup.sh` | 최초 설치 |
-| `deploy/deploy.sh` | 업데이트 |
-| `deploy/workbook.service` | gunicorn systemd 유닛 |
-| `deploy/nginx.conf` | nginx 사이트 설정 (`__SERVER_NAME__` 치환 필요) |
-| `backend/.env.example` | 환경변수 목록 |
-
 ### 백업
 
-`backend/db.sqlite3` 하나가 전부다.
+볼륨 안의 SQLite 파일 하나가 전부다.
 
+```bash
+docker compose cp web:/srv/app/db/db.sqlite3 ~/backup/db-$(date +%F).sqlite3
 ```
-0 4 * * * cp /srv/workbook/backend/db.sqlite3 ~/backup/db-$(date +\%F).sqlite3
-```
+
+crontab에 넣으려면 `%`를 이스케이프해야 한다 (`\%F`).
