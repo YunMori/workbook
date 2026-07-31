@@ -47,6 +47,12 @@ CORS_ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"] if DEB
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    # 이 API는 로그인을 쓰지 않는다(브라우저 토큰으로만 본인 이력을 찾는다).
+    # 인증 클래스를 비워 두지 않으면 DRF의 SessionAuthentication이 admin 세션 쿠키를 집어
+    # 로그인한 상태로 판정하고 CSRF 토큰을 요구한다. 배포 환경은 nginx가 SPA와 admin을
+    # 같은 오리진으로 묶으므로, admin에 로그인한 브라우저에서는 응시 시작·제출 POST가
+    # 전부 403 CSRF Failed로 막힌다.
+    "DEFAULT_AUTHENTICATION_CLASSES": [],
     # 브라우저로 API를 훑어보는 화면은 개발할 때만 쓴다.
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"]
     + (["rest_framework.renderers.BrowsableAPIRenderer"] if DEBUG else []),

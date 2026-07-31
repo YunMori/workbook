@@ -1,6 +1,8 @@
+import uuid
 from decimal import Decimal
 
-from django.test import TestCase
+from django.contrib.auth.models import User
+from django.test import Client, TestCase
 from rest_framework.test import APIClient
 
 from exams.grading import grade_short_answer, normalize
@@ -200,3 +202,24 @@ class AttemptFlowTests(TestCase):
             format="json",
         )
         self.assertEqual(len(response.json()["answers"]), 1)
+
+
+class AdminSessionTests(TestCase):
+    """배포 환경은 SPA와 admin이 같은 오리진이라 admin 세션 쿠키가 /api/에도 실려 온다.
+
+    DRF가 그 쿠키로 로그인 상태를 인식하면 CSRF 토큰을 요구해 응시 시작이 403으로 막힌다.
+    """
+
+    def setUp(self):
+        self.exam = Exam.objects.create(title="세션 시험", round=8, version=1)
+        User.objects.create_superuser("admin", "admin@example.com", "pw-for-test-1234")
+
+    def test_start_attempt_while_logged_into_admin(self):
+        client = Client(enforce_csrf_checks=True)
+        client.login(username="admin", password="pw-for-test-1234")
+        response = client.post(
+            "/api/attempts/",
+            {"exam": self.exam.id, "token": str(uuid.uuid4())},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)

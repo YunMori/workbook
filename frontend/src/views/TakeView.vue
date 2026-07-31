@@ -29,6 +29,17 @@ const autoSubmitted = ref(false)
 const answers = reactive({}) // { [questionId]: { selected_choice, text_answer } }
 let ticker = null
 
+// 실패 원인을 한 줄로. 응답이 없으면 서버가 죽은 것이고, 있으면 상태 코드가 원인을 가리킨다.
+function describe(e) {
+  const status = e?.response?.status
+  if (!status) return '백엔드 서버에 연결하지 못했습니다.'
+  if (status === 403) {
+    return '서버가 요청을 거부했습니다 (403). 관리자 로그인 세션을 지우고 다시 시도해 보세요.'
+  }
+  const detail = e.response.data?.detail
+  return `서버 응답 ${status}${detail ? ` — ${detail}` : ''}`
+}
+
 const elapsedSec = computed(() => Math.floor((now.value - startedAt.value) / 1000))
 const remainingSec = computed(() => (exam.value?.time_limit_min ?? 60) * 60 - elapsedSec.value)
 const overtime = computed(() => remainingSec.value < 0)
@@ -75,8 +86,9 @@ onMounted(async () => {
       startedAt.value = Date.now()
       persist()
     }
-  } catch {
-    error.value = '응시를 시작하지 못했습니다. 백엔드 서버 상태를 확인하세요.'
+  } catch (e) {
+    // 무엇이 막았는지 화면에 남긴다. 서버가 아니라 브라우저 쪽 문제일 때도 있다.
+    error.value = `응시를 시작하지 못했습니다. ${describe(e)}`
   } finally {
     loading.value = false
   }
