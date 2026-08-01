@@ -27,7 +27,8 @@ class ExamViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         qs = Exam.objects.filter(is_published=True)
         if self.action == "list":
-            return qs.annotate(
+            # 집계(GROUP BY) 질의에서는 Meta.ordering이 적용되지 않아 차수 순서가 흐트러진다.
+            return qs.order_by("round", "version").annotate(
                 question_count=Count("questions", distinct=True),
                 mc_count=Count(
                     "questions",

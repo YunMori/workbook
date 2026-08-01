@@ -18,9 +18,18 @@ from django.db import transaction
 from exams.models import Choice, Exam, Question, QuestionType, Solution
 from exams.parsers.markdown_exam import parse_questions, parse_solutions
 
-QUESTION_SUFFIX = "_문제.md"
-SOLUTION_SUFFIX = "_정답해설.md"
+# 회차마다 파일 이름 규칙이 다르다. 접두사가 같은 문제/정답 파일을 한 쌍으로 묶는다.
+QUESTION_SUFFIXES = ("_문제.md", "_문제지.md")
+SOLUTION_SUFFIXES = ("_정답해설.md", "_정답지.md")
 OVERRIDES_FILE = "overrides.json"
+
+
+def strip_suffix(name, suffixes):
+    """이름이 주어진 접미사로 끝나면 떼어낸 접두사를, 아니면 None을 돌려준다."""
+    for suffix in suffixes:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return None
 
 
 def nfc(value):
@@ -74,10 +83,13 @@ class Command(BaseCommand):
         solutions = {}
         for path in candidates:
             name = nfc(path.name)
-            if name.endswith(QUESTION_SUFFIX):
-                questions[name[: -len(QUESTION_SUFFIX)]] = path
-            elif name.endswith(SOLUTION_SUFFIX):
-                solutions[name[: -len(SOLUTION_SUFFIX)]] = path
+            prefix = strip_suffix(name, QUESTION_SUFFIXES)
+            if prefix:
+                questions[prefix] = path
+                continue
+            prefix = strip_suffix(name, SOLUTION_SUFFIXES)
+            if prefix:
+                solutions[prefix] = path
 
         pairs = []
         for prefix, question_path in sorted(questions.items()):
@@ -99,11 +111,14 @@ class Command(BaseCommand):
         return {}
 
     def _import_pair(self, question_path, solution_path, options):
-        parsed = parse_questions(question_path.read_text(encoding="utf-8"))
+        parsed = parse_questions(
+            question_path.read_text(encoding="utf-8"), source_name=nfc(question_path.name)
+        )
         solved = parse_solutions(solution_path.read_text(encoding="utf-8"))
         meta = parsed["meta"]
         questions = parsed["questions"]
 
+        self._fill_essay_points(meta, questions, solved)
         applied = self._apply_overrides(meta, questions)
         label = f"{meta['round']}차 V{meta['version']}"
         self.stdout.write("")
@@ -135,6 +150,20 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("  ✓ 저장 완료"))
         return "imported"
 
+    def _fill_essay_points(self, meta, questions, solved):
+        """문제지에 배점이 없는 서술형은 채점 기준표 합계를 배점으로 삼는다."""
+        changed = False
+        for question in questions:
+            if question["qtype"] != QuestionType.ESSAY or question.get("points_explicit"):
+                continue
+            rubric = solved["essay"].get(question["number"], {}).get("rubric") or []
+            total = sum(float(item.get("points", 0)) for item in rubric)
+            if total:
+                question["points"] = total
+                changed = True
+        if changed and not meta["total_explicit"]:
+            meta["total_score"] = round(sum(q["points"] for q in questions))
+
     def _apply_overrides(self, meta, questions):
         entries = self.overrides.get(f"{meta['round']}-{meta['version']}", {})
         applied = []
@@ -162,17 +191,22 @@ class Command(BaseCommand):
                 problems.append(f"{question['number']}번 지문이 비어 있음")
         return problems
 
+    def _exam_title(self, meta):
+        """목록에 그대로 노출되는 이름. 차수가 둘 이상이라 과목명까지 붙여 구분한다."""
+        title = f"{meta['round']}차 모의고사 {meta['version']}"
+        subject = (meta.get("subject") or "").strip()
+        return f"{title} — {subject}" if subject else title
+
     def _write(self, meta, questions, solved, existing):
         exam, _ = Exam.objects.update_or_create(
             round=meta["round"],
             version=meta["version"],
             defaults={
-                # 화면에 그대로 노출되는 이름. 원본 마크다운 제목은 너무 길어 쓰지 않는다.
-                "title": f"모의고사 {meta['version']}",
+                "title": self._exam_title(meta),
                 "scope": meta["scope"],
                 "time_limit_min": meta["time_limit_min"],
                 "total_score": meta["total_score"],
-                "order": meta["version"],
+                "order": meta["round"] * 100 + meta["version"],
             },
         )
         exam.questions.all().delete()  # 문항을 통째로 다시 만든다(선택지·해설은 cascade)
