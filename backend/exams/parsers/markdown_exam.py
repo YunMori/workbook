@@ -2,8 +2,13 @@
 
 파일 I/O 없는 순수 함수라 테스트에서 문자열만 넣어 검증할 수 있다.
 
-- `parse_questions()`  : `*_문제.md`     → 메타 + 문항 목록
-- `parse_solutions()`  : `*_정답해설.md` → 정답표 + 문항별 해설/모범답안/채점기준
+- `parse_questions()`  : `*_문제.md` / `*_문제지.md`     → 메타 + 문항 목록
+- `parse_solutions()`  : `*_정답해설.md` / `*_정답지.md` → 정답표 + 문항별 해설/모범답안/채점기준
+
+원본 마크다운은 회차마다 표기가 조금씩 다르다. 아래 두 계열을 모두 받는다.
+
+    2차 계열      `## Ⅰ. 객관식 (각 3점, 총 63점)` / `**12. [기초]** 지문`
+    1차(round 01) `## 객관식`                      / `**12.** 지문` 또는 `### 12. 지문`
 
 두 파일 모두 코드 펜스(```)를 포함하므로, 모든 구조 인식은 **펜스 밖에서만** 수행한다.
 펜스 안의 `①`, `---`, `**...**` 는 문제 지문의 일부이지 구조가 아니다.
@@ -17,15 +22,24 @@ FENCE_RE = re.compile(r"^\s*(```|~~~)")
 HR_RE = re.compile(r"^\s*-{3,}\s*$")
 
 # **12. [기초]** 지문…   /  **22.** 지문…
-QUESTION_RE = re.compile(r"^\*\*(\d{1,2})\.\s*(?:\[([^\]]+)\])?\*\*\s*(.*)$")
-# ## Ⅰ. 객관식 (각 3점, 총 63점)
-SECTION_RE = re.compile(r"^##\s*([ⅠⅡⅢIVX]+)\.\s*(\S+)\s*(?:\((.*)\))?")
+QUESTION_RE = re.compile(r"^\*\*(\d{1,3})\.\s*(?:\[([^\]]+)\])?\*\*\s*(.*)$")
+# ### 12. 지문…
+QUESTION_HEADING_RE = re.compile(r"^###\s*(\d{1,3})\.\s*(?:\[([^\]]+)\]\s*)?(.*)$")
+# ## Ⅰ. 객관식 (각 3점, 총 63점) / ## 객관식 / ## 주관식 해설 / ## 서술형 채점 기준
+SECTION_RE = re.compile(
+    r"^##\s*(?:[ⅠⅡⅢⅣⅤIVX]+\.\s*)?(객관식|주관식|서술형)"
+    r"(?:\s*(?:해설|채점\s*기준))?\s*(?:\((.*)\))?\s*$"
+)
 # **3. 정답 ④** — 해설…
-SOLUTION_ANSWER_RE = re.compile(r"^\*\*(\d{1,2})\.\s*정답\s*([①②③④⑤])\*\*\s*(?:—|-|:)?\s*(.*)$")
-# **28. (5점)**
-ESSAY_HEADER_RE = re.compile(r"^\*\*(\d{1,2})\.\s*\((\d+(?:\.\d+)?)점\)\*\*")
-# **22.** …
-SHORT_HEADER_RE = re.compile(r"^\*\*(\d{1,2})\.\*\*\s*(.*)$")
+SOLUTION_ANSWER_RE = re.compile(r"^\*\*(\d{1,3})\.\s*정답\s*([①②③④⑤])\*\*\s*(?:—|-|:)?\s*(.*)$")
+# **28. (5점)**  /  **61**  /  **61.**
+ESSAY_BOLD_HEADER_RE = re.compile(r"^\*\*(\d{1,3})\.?(?:\s*\((\d+(?:\.\d+)?)점\))?\*\*\s*$")
+# ### 61. 제목… (4점)
+ESSAY_HEADING_RE = re.compile(r"^###\s*(\d{1,3})\.\s*.*?(?:\((\d+(?:\.\d+)?)점\))?\s*$")
+# **22.** …  /  - **41.** …
+SHORT_HEADER_RE = re.compile(r"^(?:[-*+]\s+)?\*\*(\d{1,3})\.?\*\*\s*(.*)$")
+# 지문 끝의 배점 표기 — `… 설명하시오. (4점)`
+TRAILING_POINTS_RE = re.compile(r"\s*\((\d+(?:\.\d+)?)\s*점\)\s*$")
 
 SECTION_TYPES = {"객관식": "MC", "주관식": "SHORT", "서술형": "ESSAY"}
 DIFFICULTIES = {"기초": "BASIC", "응용": "APPLIED", "심화": "ADVANCED"}
@@ -61,11 +75,29 @@ def _clean_block(lines):
     return "\n".join(out)
 
 
+def _match_question_header(line):
+    """`**12. [기초]** 지문` 과 `### 12. 지문` 두 표기를 모두 받는다.
+
+    (번호, 난이도 표기, 첫 줄 지문) 또는 None.
+    """
+    match = QUESTION_RE.match(line) or QUESTION_HEADING_RE.match(line)
+    if not match:
+        return None
+    return int(match.group(1)), (match.group(2) or "").strip(), match.group(3)
+
+
+def _match_essay_header(line):
+    """정답지의 서술형 문항 머리글. `**28. (5점)**` / `**61**` / `### 61. 제목 (4점)`."""
+    match = ESSAY_BOLD_HEADER_RE.match(line) or ESSAY_HEADING_RE.match(line)
+    return int(match.group(1)) if match else None
+
+
 def _section_points(section_note, qtype):
     """섹션 헤더 괄호 안에서 배점을 읽는다.
 
     '각 3점, 총 63점'                         → 기본 배점 3
     '28번 5점, 29·30번 각 4점, 총 13점'       → {28: 5, 29: 4, 30: 4}
+    괄호가 아예 없으면(`## 객관식`) 유형별 기본 배점을 쓴다.
     """
     default = {"MC": 3, "SHORT": 4, "ESSAY": 4}[qtype]
     per_question = {}
@@ -106,13 +138,24 @@ def _split_choices(body):
     if not choice_lines:
         return body.strip(), []
 
+    # 선택지 번호는 반드시 ①→②→③→④ 순으로 나온다. 앞 번호 뒤에서만 다음 번호를 찾으면
+    # `④ ①, ②만 존재한다` 처럼 선택지 본문이 다른 번호를 언급해도 쪼개지지 않는다.
     joined = "\n".join(choice_lines)
-    parts = re.split(f"[{CIRCLED}]", joined)[1:]  # 첫 조각은 첫 동그라미 앞의 빈 문자열
+    marks = []
+    cursor = 0
+    for number, mark in enumerate(CIRCLED, start=1):
+        position = joined.find(mark, cursor)
+        if position == -1:
+            break
+        marks.append((number, position))
+        cursor = position + 1
+
     choices = []
-    for index, part in enumerate(parts, start=1):
-        text = " ".join(part.split()).strip()
+    for index, (number, position) in enumerate(marks):
+        end = marks[index + 1][1] if index + 1 < len(marks) else len(joined)
+        text = " ".join(joined[position + 1 : end].split()).strip()
         if text:
-            choices.append({"number": index, "text": text})
+            choices.append({"number": number, "text": text})
 
     while stem_lines and not stem_lines[-1].strip():
         stem_lines.pop()
@@ -124,37 +167,84 @@ def _strip_scribbled_answer(stem):
     return re.sub(r"\s*`\s*[1-4]\s*`\s*$", "", stem.rstrip(), flags=re.MULTILINE).rstrip()
 
 
-def parse_questions(md_text):
-    """`*_문제.md` → {"meta": {...}, "questions": [...]}"""
-    text = nfc(md_text)
-    meta = {"round": None, "version": None, "title": "", "scope": "", "time_limit_min": 60, "total_score": 100}
+def _parse_meta(text, source_name):
+    """제목 줄과 머리말에서 차수·버전·과목명 등을 읽는다.
+
+    차수·버전 표기는 회차마다 다르다. 제목에서 못 찾으면 파일 이름으로 보완한다.
+
+        `… 모의고사 (2차) — Version 1`                  → 2차 V1
+        `Vue Component State Flow 모의고사 — Round 01 v5` → 1차 V5
+        `JS DOM과 Event 모의고사 — Version 1`            → (차수는 파일 이름에서)
+    """
+    meta = {
+        "round": None,
+        "version": None,
+        "title": "",
+        "subject": "",
+        "scope": "",
+        "time_limit_min": 60,
+        "time_explicit": False,
+        "total_score": None,
+        "total_explicit": False,
+    }
 
     title_match = re.search(r"^#\s+(.*)$", text, flags=re.MULTILINE)
-    if title_match:
-        title = title_match.group(1).strip()
-        meta["title"] = title
-        round_match = re.search(r"\((\d+)차\)", title)
-        version_match = re.search(r"Version\s*(\d+)", title, flags=re.IGNORECASE)
-        if round_match:
-            meta["round"] = int(round_match.group(1))
-        if version_match:
-            meta["version"] = int(version_match.group(1))
+    title = title_match.group(1).strip() if title_match else ""
+    meta["title"] = title
+
+    for pattern in (r"\((\d+)\s*차\)", r"Round\s*0*(\d+)"):
+        match = re.search(pattern, title, flags=re.IGNORECASE)
+        if match:
+            meta["round"] = int(match.group(1))
+            break
+    for pattern in (r"Version\s*0*(\d+)", r"\bv0*(\d+)\b"):
+        match = re.search(pattern, title, flags=re.IGNORECASE)
+        if match:
+            meta["version"] = int(match.group(1))
+            break
+
+    name = nfc(source_name)
+    if meta["round"] is None:
+        match = re.search(r"round[_\s-]*0*(\d+)", name, flags=re.IGNORECASE)
+        if match:
+            meta["round"] = int(match.group(1))
+    if meta["version"] is None:
+        match = re.search(r"[_\s-]v0*(\d+)\b", name, flags=re.IGNORECASE)
+        if match:
+            meta["version"] = int(match.group(1))
+
+    # 과목명 — 제목에서 버전 꼬리표와 '모의고사'를 떼어낸 부분. 시험 이름에 쓴다.
+    subject = re.split(r"\s+[—–]\s+", title)[0]
+    subject = re.sub(r"\(\s*\d+\s*차\s*\)", "", subject)
+    meta["subject"] = re.sub(r"모의고사\s*$", "", subject.strip()).strip()
 
     scope_match = re.search(r"^>\s*출제 범위\s*:\s*(.*)$", text, flags=re.MULTILINE)
-    if scope_match:
-        meta["scope"] = scope_match.group(1).strip()
+    meta["scope"] = scope_match.group(1).strip() if scope_match else meta["subject"]
     time_match = re.search(r"권장 시간\s*:\s*\**\s*(\d+)\s*분", text)
     if time_match:
         meta["time_limit_min"] = int(time_match.group(1))
+        meta["time_explicit"] = True
     total_match = re.search(r"총\s*\**\s*(\d+)\s*점\**\s*$", text, flags=re.MULTILINE)
     if total_match:
         meta["total_score"] = int(total_match.group(1))
+        meta["total_explicit"] = True
+    return meta
+
+
+def parse_questions(md_text, source_name=""):
+    """`*_문제.md` → {"meta": {...}, "questions": [...]}
+
+    `source_name`은 제목에 차수·버전이 없을 때 참고하는 파일 이름이다(선택).
+    """
+    text = nfc(md_text)
+    meta = _parse_meta(text, source_name)
 
     questions = []
     current = None
     qtype = None
     default_points = 3
     per_question_points = {}
+    points_explicit = False
 
     def flush():
         if current is None:
@@ -167,6 +257,17 @@ def parse_questions(md_text):
         else:
             current["body"] = body
             current["choices"] = []
+            # 서술형은 지문 끝에 배점을 적어 두기도 한다 — `… 설명하시오. (4점)`
+            # 배점은 화면에서 따로 보여 주므로 지문에서는 떼어낸다.
+            lines = current["body"].splitlines()
+            if current["qtype"] == "ESSAY" and lines:
+                trailing = TRAILING_POINTS_RE.search(lines[0])
+                if trailing:
+                    lines[0] = TRAILING_POINTS_RE.sub("", lines[0])
+                    current["body"] = "\n".join(lines)
+                    if not current["points_explicit"]:
+                        current["points"] = float(trailing.group(1))
+                        current["points_explicit"] = True
         del current["lines"]
         questions.append(current)
 
@@ -174,24 +275,27 @@ def parse_questions(md_text):
         if not in_fence:
             section = SECTION_RE.match(line)
             if section:
-                label = section.group(2).strip()
+                label = section.group(1).strip()
                 if label in SECTION_TYPES:
                     flush()
                     current = None
                     qtype = SECTION_TYPES[label]
-                    default_points, per_question_points = _section_points(section.group(3), qtype)
+                    note = section.group(2)
+                    default_points, per_question_points = _section_points(note, qtype)
+                    points_explicit = bool(note and "점" in note)
                 continue
 
-            question = QUESTION_RE.match(line)
+            question = _match_question_header(line)
             if question and qtype:
                 flush()
-                number = int(question.group(1))
+                number, difficulty, first_line = question
                 current = {
                     "number": number,
                     "qtype": qtype,
-                    "difficulty": DIFFICULTIES.get((question.group(2) or "").strip(), "BASIC"),
+                    "difficulty": DIFFICULTIES.get(difficulty, "BASIC"),
                     "points": per_question_points.get(number, default_points),
-                    "lines": [(question.group(3), False)],
+                    "points_explicit": points_explicit or number in per_question_points,
+                    "lines": [(first_line, False)],
                 }
                 continue
 
@@ -199,6 +303,14 @@ def parse_questions(md_text):
             current["lines"].append((line, in_fence))
 
     flush()
+
+    if not meta["total_explicit"]:
+        # 원본에 총점 표기가 없으면 배점 합계가 곧 총점이다(1차는 세트마다 문항 수가 다르다).
+        meta["total_score"] = round(sum(q["points"] for q in questions))
+    if not meta["time_explicit"] and questions:
+        # 권장 시간이 적혀 있지 않으면 2차 기준(30문항 60분 = 문항당 2분)으로 잡는다.
+        # 응시 화면은 이 시간이 끝나면 자동 제출하므로 문항 수에 비례해야 한다.
+        meta["time_limit_min"] = max(60, round(len(questions) * 2 / 5) * 5)
     return {"meta": meta, "questions": questions}
 
 
@@ -237,6 +349,9 @@ def _extract_short_answer_rules(first_line, block):
     is_list_item = bool(re.match(r"^([-*+]|\d+\.)\s+", line))
     is_fence = bool(FENCE_RE.match(line))
     stem = re.sub(r"^([-*+]|\d+\.)\s+", "", line)
+    # `정답: Pinia — 슬라이드에서 …` 처럼 머리말과 부연 설명이 붙어 오는 회차가 있다.
+    stem = re.sub(r"^정답\s*[::]\s*", "", stem)
+    stem = re.split(r"\s+[—–]\s+", stem, maxsplit=1)[0].strip()
 
     raw_tokens = re.findall(r"`([^`]+)`", stem) + re.findall(r"\*\*([^*]+)\*\*", stem)
     tokens = []
@@ -254,12 +369,13 @@ def _extract_short_answer_rules(first_line, block):
         if token not in accepted:
             accepted.append(token)
 
-    keywords = [tokens] if tokens else []
+    # 마크업이 없는 짧은 한 낱말 답(`HTMLCollection`)은 그 자체를 키워드로 쓴다.
+    keywords = [tokens] if tokens else ([[plain]] if plain and len(plain) <= 30 else [])
 
     needs_review = (
         is_fence  # 답이 코드블록 안에 있음
         or is_list_item  # 여러 항목으로 나뉜 답
-        or not tokens  # 뽑아낼 값이 없음
+        or not keywords  # 뽑아낼 값이 없음
         or len(plain) > 60  # 서술형에 가까운 답
         or "가지" in plain
         or "정답 인정" in plain
@@ -284,7 +400,10 @@ def _parse_rubric(block):
 
 
 def _parse_model_answer(block):
-    """`**모범 답안**` 뒤의 인용문(`> …`)을 모은다."""
+    """`**모범 답안**` 뒤의 본문을 모은다.
+
+    인용문(`> …`)으로 적힌 회차와 `**모범 답안:** 본문…`처럼 같은 줄에 이어 쓴 회차가 있다.
+    """
     lines = []
     collecting = False
     for line, in_fence in iter_lines(block):
@@ -292,6 +411,10 @@ def _parse_model_answer(block):
         # 표제 줄만 시작 신호로 본다. 인용문 본문에 같은 표현이 나와도 건너뛰면 안 된다.
         if not in_fence and not stripped.startswith(">") and "모범 답안" in stripped:
             collecting = True
+            # `**모범 답안:**` / `**모범 답안**:` 등 표기가 섞여 있어 남은 기호를 털어낸다.
+            rest = re.sub(r"^.*?모범\s*답안", "", stripped).lstrip("*:： ").strip()
+            if rest:
+                lines.append(rest)
             continue
         if not collecting:
             continue
@@ -299,6 +422,8 @@ def _parse_model_answer(block):
             lines.append(re.sub(r"^>\s?", "", stripped).rstrip())
         elif stripped and not stripped.startswith(("|", "-")):
             lines.append(stripped)
+        elif not stripped and lines:
+            lines.append("")  # 여러 문단으로 된 모범 답안의 문단 구분을 남긴다
     return "\n".join(lines).strip()
 
 
@@ -345,7 +470,7 @@ def parse_solutions(md_text):
         if not in_fence:
             section_match = SECTION_RE.match(line)
             if section_match:
-                label = section_match.group(2).strip()
+                label = section_match.group(1).strip()
                 if label in SECTION_TYPES:
                     flush()
                     current_number, current_lines = None, []
@@ -360,13 +485,19 @@ def parse_solutions(md_text):
                     inline_answers[current_number] = CIRCLED.index(match.group(2)) + 1
                     current_lines = [(match.group(3), False)]
                     continue
-            elif section in ("SHORT", "ESSAY"):
-                header = ESSAY_HEADER_RE.match(line) if section == "ESSAY" else SHORT_HEADER_RE.match(line)
+            elif section == "SHORT":
+                header = SHORT_HEADER_RE.match(line)
                 if header:
                     flush()
                     current_number = int(header.group(1))
-                    rest = header.group(2) if section == "SHORT" else ""
-                    current_lines = [(rest, False)]
+                    current_lines = [(header.group(2), False)]
+                    continue
+            elif section == "ESSAY":
+                header = _match_essay_header(line)
+                if header:
+                    flush()
+                    current_number = header
+                    current_lines = []
                     continue
 
         if current_number is not None:

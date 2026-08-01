@@ -160,8 +160,119 @@ class ParseSolutionsTests(SimpleTestCase):
         self.assertTrue(any("2번 정답 불일치" in w for w in warnings))
 
 
+ROUND_01_QUESTION_MD = """# JS DOM과 Event 모의고사 — Version 3
+
+---
+
+## 객관식
+
+**1.** DOM에서 최상위 객체는?
+
+① `window`
+② `document`
+③ `navigator`
+④ 위 ①, ② 모두
+
+---
+
+## 주관식
+
+**41.** 실시간으로 DOM 변경을 반영하는 자료구조의 이름은?
+
+---
+
+## 서술형
+
+**61.** `innerHTML`과 `textContent`의 차이를 설명하시오. (4점)
+
+---
+"""
+
+ROUND_01_SOLUTION_MD = """# JS DOM과 Event 모의고사 (Version 3) — 정답 및 해설
+
+## 빠른 정답표 (객관식)
+
+| 1   |
+| --- |
+| ②   |
+
+---
+
+## 객관식 해설
+
+**1. 정답 ②** — 모든 요소는 `document`의 하위 객체다.
+
+---
+
+## 주관식 해설
+
+- **41.** 정답: HTMLCollection — 구식 선택자들이 반환한다.
+
+---
+
+## 서술형 채점 기준
+
+### 61. innerHTML과 textContent의 차이 (4점)
+
+| 배점 | 채점 요소 |
+| --- | --- |
+| 2점 | `innerHTML`은 마크업으로 해석되어 XSS에 취약 |
+| 2점 | `textContent`는 순수 텍스트로만 처리 |
+
+**모범 답안:** `innerHTML`은 문자열을 HTML로 해석한다.
+
+---
+"""
+
+
+class Round01FormatTests(SimpleTestCase):
+    """1차(round 01) 표기 — 로마 숫자 없는 섹션, `### N.` 머리글, 배점 표기 없음."""
+
+    def setUp(self):
+        self.parsed = parse_questions(
+            ROUND_01_QUESTION_MD, source_name="subject_exam_round_01_모의고사_v3_문제지.md"
+        )
+        self.questions = {q["number"]: q for q in self.parsed["questions"]}
+        self.solved = parse_solutions(ROUND_01_SOLUTION_MD)
+
+    def test_round_comes_from_file_name_when_title_omits_it(self):
+        self.assertEqual(self.parsed["meta"]["round"], 1)
+        self.assertEqual(self.parsed["meta"]["version"], 3)
+        self.assertEqual(self.parsed["meta"]["subject"], "JS DOM과 Event")
+
+    def test_sections_without_roman_numeral_or_points(self):
+        self.assertEqual(self.questions[1]["qtype"], "MC")
+        self.assertEqual(self.questions[41]["qtype"], "SHORT")
+        self.assertEqual(self.questions[61]["qtype"], "ESSAY")
+
+    def test_choice_text_may_mention_other_choice_numbers(self):
+        choices = self.questions[1]["choices"]
+        self.assertEqual([c["number"] for c in choices], [1, 2, 3, 4])
+        self.assertEqual(choices[3]["text"], "위 ①, ② 모두")
+
+    def test_essay_points_come_from_the_stem(self):
+        essay = self.questions[61]
+        self.assertEqual(essay["points"], 4)
+        self.assertNotIn("(4점)", essay["body"])  # 배점은 화면에서 따로 보여 준다
+
+    def test_total_score_falls_back_to_the_sum_of_points(self):
+        self.assertEqual(self.parsed["meta"]["total_score"], 11)  # 3 + 4 + 4
+
+    def test_short_answer_written_as_a_bullet(self):
+        rules = self.solved["short"][41]
+        self.assertEqual(rules["accepted_answers"], ["HTMLCollection"])  # `정답:`과 부연 설명 제거
+        self.assertFalse(rules["needs_review"])
+
+    def test_essay_heading_with_inline_model_answer(self):
+        essay = self.solved["essay"][61]
+        self.assertEqual([r["points"] for r in essay["rubric"]], [2.0, 2.0])
+        self.assertEqual(essay["model_answer"], "`innerHTML`은 문자열을 HTML로 해석한다.")
+
+
 class RealExamFilesTests(SimpleTestCase):
-    """data/exams 의 실제 5개 버전이 규격대로 파싱되는지 확인한다."""
+    """data/exams 의 실제 파일이 규격대로 파싱되는지 확인한다."""
+
+    SUFFIXES = (("_문제.md", "_정답해설.md"), ("_문제지.md", "_정답지.md"))
 
     @classmethod
     def setUpClass(cls):
@@ -170,15 +281,47 @@ class RealExamFilesTests(SimpleTestCase):
         cls.pairs = []
         files = {unicodedata.normalize("NFC", p.name): p for p in source.glob("*.md")}
         for name, path in sorted(files.items()):
-            if name.endswith("_문제.md"):
-                solution = files.get(name.replace("_문제.md", "_정답해설.md"))
-                cls.pairs.append((name, path, solution))
+            for question_suffix, solution_suffix in cls.SUFFIXES:
+                if name.endswith(question_suffix):
+                    solution = files.get(name.replace(question_suffix, solution_suffix))
+                    cls.pairs.append((name, path, solution))
 
     def test_all_versions_present(self):
-        self.assertEqual(len(self.pairs), 5)
+        self.assertEqual(len(self.pairs), 11)  # 2차 5세트 + 1차 6세트
+        self.assertTrue(all(solution is not None for _, _, solution in self.pairs))
+
+    def test_structure_of_round_01_files(self):
+        """1차는 세트마다 문항 수가 다르므로 규격이 아니라 짝이 맞는지를 본다."""
+        pairs = [p for p in self.pairs if "round_01" in p[0]]
+        self.assertEqual(len(pairs), 6)
+        for name, question_path, solution_path in pairs:
+            with self.subTest(version=name):
+                parsed = parse_questions(question_path.read_text(encoding="utf-8"), source_name=name)
+                solved = parse_solutions(solution_path.read_text(encoding="utf-8"))
+                questions = parsed["questions"]
+
+                numbers = [q["number"] for q in questions]
+                self.assertEqual(numbers, list(range(1, len(questions) + 1)))
+                self.assertEqual(parsed["meta"]["round"], 1)
+
+                for question in questions:
+                    number = question["number"]
+                    self.assertTrue(question["body"].strip(), f"{number}번 지문 비어 있음")
+                    if question["qtype"] == "MC":
+                        self.assertEqual(len(question["choices"]), 4, f"{number}번")
+                        self.assertIn(number, solved["answers"])
+                    elif question["qtype"] == "SHORT":
+                        self.assertIn(number, solved["short"], f"{number}번")
+                    else:
+                        self.assertTrue(solved["essay"].get(number, {}).get("rubric"), f"{number}번")
+
+                self.assertEqual([w for w in solved["warnings"] if "불일치" in w], [])
 
     def test_structure_of_every_version(self):
-        for name, question_path, solution_path in self.pairs:
+        """2차는 5세트 모두 30문항·100점 규격이다."""
+        pairs = [p for p in self.pairs if "2차" in p[0]]
+        self.assertEqual(len(pairs), 5)
+        for name, question_path, solution_path in pairs:
             with self.subTest(version=name):
                 parsed = parse_questions(question_path.read_text(encoding="utf-8"))
                 solved = parse_solutions(solution_path.read_text(encoding="utf-8"))
